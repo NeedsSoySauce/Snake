@@ -12,8 +12,8 @@ use std::time::Duration;
 use point::Point;
 mod point;
 
-const ROWS: usize = 15;
-const COLS: usize = 17;
+const ROWS: usize = 1;
+const COLS: usize = 10;
 
 const HORIZONTAL_BORDER: char = ' ';
 const VERTICAL_BORDER: char = ' ';
@@ -46,7 +46,7 @@ fn main() {
         get_input(input_code_clone).expect("Thread error.");
     });
 
-    game_loop(input_code);
+    game_loop(input_code).expect("Error during game loop.");
 
     join_handle.join().expect("Error joining thread.");
 
@@ -90,7 +90,7 @@ fn get_input(input_code: Arc<AtomicUsize>) -> Result<()> {
     Ok(())
 }
 
-fn get_random_empty_cell(cells: &mut [[usize; ROWS as usize]; COLS as usize]) -> Point {
+fn get_random_empty_cell(cells: &mut [[usize; ROWS as usize]; COLS as usize]) -> Result<Point> {
     let mut rng = rand::thread_rng();
     let row_die = Uniform::from(0..ROWS);
     let col_die = Uniform::from(0..COLS);
@@ -99,31 +99,25 @@ fn get_random_empty_cell(cells: &mut [[usize; ROWS as usize]; COLS as usize]) ->
     let mut y: usize;
 
     // Keep generating positions until we find an empty cell
-    let mut count = 0;
     loop {
         x = col_die.sample(&mut rng);
         y = row_die.sample(&mut rng);
-        count += 1;
 
         if cells[x][y] == EMPTY_CELL_ID {
             break;
         };
-
-        if count > ROWS * COLS {
-            panic!("No empty cells available!");
-        }
     }
 
-    return Point { x: x, y: y };
+    Ok(Point { x: x, y: y })
 }
 
-fn create_fruit(cells: &mut [[usize; ROWS as usize]; COLS as usize]) -> Point {
-    let pt = get_random_empty_cell(cells);
+fn create_fruit(cells: &mut [[usize; ROWS as usize]; COLS as usize]) -> Result<Point> {
+    let pt = get_random_empty_cell(cells)?;
     cells[pt.x][pt.y] = FRUIT_CELL_ID;
-    return pt;
+    Ok(pt)
 }
 
-fn game_loop(input_code: Arc<AtomicUsize>) {
+fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
     let mut cells: [[usize; ROWS as usize]; COLS as usize] = [[0; ROWS as usize]; COLS as usize];
 
     let mut snake: [Point; (ROWS * COLS) as usize] = [Point { x: 0, y: 0 }; (ROWS * COLS) as usize];
@@ -134,7 +128,7 @@ fn game_loop(input_code: Arc<AtomicUsize>) {
     snake[0].x = COLS / 2;
     snake[0].y = ROWS / 2;
 
-    let mut fruit = create_fruit(&mut cells);
+    let mut fruit = create_fruit(&mut cells)?;
 
     while code != EXIT_CODE {
         let tail = snake[snake_length - 1];
@@ -147,16 +141,26 @@ fn game_loop(input_code: Arc<AtomicUsize>) {
 
         // Move the snake in w/e direction the user last entered
         {
-            let head = &mut snake[0];
-            let y = head.y;
-            let x = head.x;
+            let mut dest = snake[0];
+            let y = dest.y;
+            let x = dest.x;
 
             match code {
-                UP_CODE => head.y = if y == 0 { ROWS - 1 } else { y - 1 },
-                LEFT_CODE => head.x = if x == 0 { COLS - 1 } else { x - 1 },
-                DOWN_CODE => head.y = if y == ROWS - 1 { 0 } else { y + 1 },
-                RIGHT_CODE => head.x = if x == COLS - 1 { 0 } else { x + 1 },
+                UP_CODE => dest.y = if y == 0 { ROWS - 1 } else { y - 1 },
+                LEFT_CODE => dest.x = if x == 0 { COLS - 1 } else { x - 1 },
+                DOWN_CODE => dest.y = if y == ROWS - 1 { 0 } else { y + 1 },
+                RIGHT_CODE => dest.x = if x == COLS - 1 { 0 } else { x + 1 },
                 _ => (),
+            }
+
+            // Check if the cell the snake is moving into is occupied by itself
+            if cells[dest.x][dest.y] == SNAKE_CELL_ID {
+                println!("You came second place!\r");
+                break;
+            } else {
+                let head = &mut snake[0];
+                head.x = dest.x;
+                head.y = dest.y;
             }
         }
 
@@ -164,14 +168,15 @@ fn game_loop(input_code: Arc<AtomicUsize>) {
 
         // If the snake's head overlaps the current fruit position
         if head.x == fruit.x && head.y == fruit.y {
-            fruit = create_fruit(&mut cells);
             snake_length += 1;
             snake[snake_length - 1] = tail;
 
-            if snake_length > (ROWS * COLS) {
+            if snake_length == (ROWS * COLS) {
                 println!("You win!\r");
-                return;
+                break;
             }
+
+            fruit = create_fruit(&mut cells)?;
         } else {
             // Empty the cell at the end of the snake
             cells[tail.x][tail.y] = EMPTY_CELL_ID;
@@ -183,6 +188,8 @@ fn game_loop(input_code: Arc<AtomicUsize>) {
         thread::sleep(GAME_SPEED);
         code = input_code.load(Ordering::Relaxed);
     }
+
+    Ok(())
 }
 
 fn print_horizontal_border() {
