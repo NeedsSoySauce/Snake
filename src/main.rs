@@ -12,8 +12,8 @@ use std::time::Duration;
 use point::Point;
 mod point;
 
-const ROWS: usize = 1;
-const COLS: usize = 10;
+const ROWS: usize = 15;
+const COLS: usize = 17;
 
 const HORIZONTAL_BORDER: char = ' ';
 const VERTICAL_BORDER: char = ' ';
