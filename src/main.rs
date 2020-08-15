@@ -1,10 +1,10 @@
-use crossterm::event::{read, Event, KeyCode, KeyModifiers};
+use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::Result;
 
 use rand::distributions::{Distribution, Uniform};
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -39,51 +39,59 @@ fn main() {
 
     // Wrap in an ARC so that we can share ownership between the main and second thread
     let input_code = Arc::new(AtomicUsize::new(UP_CODE));
+    let exit_flag = Arc::new(AtomicBool::new(false));
 
     // Create a thread that polls for user input
-    let input_code_clone = input_code.clone();
-    let join_handle = thread::spawn(move || {
-        get_input(input_code_clone).expect("Thread error.");
+    let join_handle = thread::spawn({
+        let input_code_clone = input_code.clone();
+        let exit_flag_clone = exit_flag.clone();
+
+        move || {
+            get_input(input_code_clone, exit_flag_clone).expect("Thread error.");
+        }
     });
 
     game_loop(input_code).expect("Error during game loop.");
 
+    exit_flag.store(true, Ordering::Relaxed);
     join_handle.join().expect("Error joining thread.");
 
     disable_raw_mode().expect("Error disabling raw mode.");
 }
 
-fn get_input(input_code: Arc<AtomicUsize>) -> Result<()> {
-    loop {
-        match read()? {
-            Event::Key(event) => {
-                // Exit if CTRL-C is pressed
-                if event.code == KeyCode::Char('c') && event.modifiers == KeyModifiers::CONTROL {
-                    input_code.store(EXIT_CODE, Ordering::Relaxed);
-                    break;
+fn get_input(input_code: Arc<AtomicUsize>, exit_flag: Arc<AtomicBool>) -> Result<()> {
+    while !exit_flag.load(Ordering::Relaxed) {
+        if poll(GAME_SPEED)? {
+            match read()? {
+                Event::Key(event) => {
+                    // Exit if CTRL-C is pressed
+                    if event.code == KeyCode::Char('c') && event.modifiers == KeyModifiers::CONTROL
+                    {
+                        input_code.store(EXIT_CODE, Ordering::Relaxed);
+                        break;
+                    }
+                    let mut value = input_code.load(Ordering::Relaxed);
+                    match event.code {
+                        KeyCode::Char('w') => value = UP_CODE,
+                        KeyCode::Char('W') => value = UP_CODE,
+                        KeyCode::Up => value = UP_CODE,
+                        KeyCode::Char('a') => value = LEFT_CODE,
+                        KeyCode::Char('A') => value = LEFT_CODE,
+                        KeyCode::Left => value = LEFT_CODE,
+                        KeyCode::Char('s') => value = DOWN_CODE,
+                        KeyCode::Char('S') => value = DOWN_CODE,
+                        KeyCode::Down => value = DOWN_CODE,
+                        KeyCode::Char('d') => value = RIGHT_CODE,
+                        KeyCode::Char('D') => value = RIGHT_CODE,
+                        KeyCode::Right => value = RIGHT_CODE,
+                        _ => (),
+                    }
+                    input_code.store(value, Ordering::Relaxed);
                 }
-
-                let mut value = input_code.load(Ordering::Relaxed);
-
-                match event.code {
-                    KeyCode::Char('w') => value = UP_CODE,
-                    KeyCode::Char('W') => value = UP_CODE,
-                    KeyCode::Up => value = UP_CODE,
-                    KeyCode::Char('a') => value = LEFT_CODE,
-                    KeyCode::Char('A') => value = LEFT_CODE,
-                    KeyCode::Left => value = LEFT_CODE,
-                    KeyCode::Char('s') => value = DOWN_CODE,
-                    KeyCode::Char('S') => value = DOWN_CODE,
-                    KeyCode::Down => value = DOWN_CODE,
-                    KeyCode::Char('d') => value = RIGHT_CODE,
-                    KeyCode::Char('D') => value = RIGHT_CODE,
-                    KeyCode::Right => value = RIGHT_CODE,
-                    _ => (),
-                }
-
-                input_code.store(value, Ordering::Relaxed);
+                _ => (),
             }
-            _ => (),
+        } else {
+            // No input
         }
     }
 
