@@ -1,9 +1,14 @@
 use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::style::Print;
+use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode};
+use crossterm::ExecutableCommand;
 use crossterm::Result;
+use crossterm::{cursor, QueueableCommand};
 
 use rand::distributions::{Distribution, Uniform};
 
+use std::env;
+use std::io::{stdout, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -15,16 +20,17 @@ mod point;
 const ROWS: usize = 15;
 const COLS: usize = 17;
 
-const HORIZONTAL_BORDER: char = ' ';
-const VERTICAL_BORDER: char = ' ';
-const EMPTY_CELL: char = '⬛';
-const SNAKE: char = '🟩';
-const FRUIT: char = '🟥';
-const UNKNOWN_CELL_VALUE: char = '⬜';
+static mut HORIZONTAL_BORDER: char = '#';
+static mut VERTICAL_BORDER: char = '#';
+static mut EMPTY_CELL: char = '-';
+static mut SNAKE: char = 'S';
+static mut FRUIT: char = 'F';
+static mut UNKNOWN_CELL_VALUE: char = '?';
 
 const EMPTY_CELL_ID: usize = 0;
 const SNAKE_CELL_ID: usize = 1;
 const FRUIT_CELL_ID: usize = 2;
+const INIT_CELL_ID: usize = 3;
 
 const EXIT_CODE: usize = 0;
 const UP_CODE: usize = 1;
@@ -34,7 +40,11 @@ const RIGHT_CODE: usize = 4;
 
 const GAME_SPEED: Duration = Duration::from_millis(100);
 
+type PlayArea = [[usize; ROWS as usize]; COLS as usize];
+
 fn main() {
+    println!("{}", env::consts::OS);
+
     enable_raw_mode().expect("Error enabling raw mode.");
 
     // Wrap in an ARC so that we can share ownership between the main and second thread
@@ -55,6 +65,10 @@ fn main() {
 
     exit_flag.store(true, Ordering::Relaxed);
     join_handle.join().expect("Error joining thread.");
+
+    stdout().execute(cursor::MoveDown(1)).unwrap();
+    println!("Press any key to exit...\r");
+    read().unwrap();
 
     disable_raw_mode().expect("Error disabling raw mode.");
 }
@@ -98,7 +112,7 @@ fn get_input(input_code: Arc<AtomicUsize>, exit_flag: Arc<AtomicBool>) -> Result
     Ok(())
 }
 
-fn get_random_empty_cell(cells: &mut [[usize; ROWS as usize]; COLS as usize]) -> Result<Point> {
+fn get_random_empty_cell(cells: &mut PlayArea) -> Result<Point> {
     let mut rng = rand::thread_rng();
     let row_die = Uniform::from(0..ROWS);
     let col_die = Uniform::from(0..COLS);
@@ -119,14 +133,23 @@ fn get_random_empty_cell(cells: &mut [[usize; ROWS as usize]; COLS as usize]) ->
     Ok(Point { x: x, y: y })
 }
 
-fn create_fruit(cells: &mut [[usize; ROWS as usize]; COLS as usize]) -> Result<Point> {
+fn create_fruit(cells: &mut PlayArea) -> Result<Point> {
     let pt = get_random_empty_cell(cells)?;
     cells[pt.x][pt.y] = FRUIT_CELL_ID;
     Ok(pt)
 }
 
+fn copy_cells(a: PlayArea, b: &mut PlayArea) {
+    for i in 0..ROWS {
+        for j in 0..COLS {
+            b[j][i] = a[j][i]
+        }
+    }
+}
+
 fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
-    let mut cells: [[usize; ROWS as usize]; COLS as usize] = [[0; ROWS as usize]; COLS as usize];
+    let mut cells: PlayArea = [[EMPTY_CELL_ID; ROWS as usize]; COLS as usize];
+    let mut prev_cells: PlayArea = [[INIT_CELL_ID; ROWS as usize]; COLS as usize];
 
     let mut snake: [Point; (ROWS * COLS) as usize] = [Point { x: 0, y: 0 }; (ROWS * COLS) as usize];
     let mut snake_length: usize = 1;
@@ -137,6 +160,14 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
     snake[0].y = ROWS / 2;
 
     let mut fruit = create_fruit(&mut cells)?;
+
+    let mut stdout = stdout();
+
+    stdout
+        .execute(terminal::Clear(terminal::ClearType::All))?
+        .execute(cursor::Hide)?;
+
+    init_screen()?;
 
     while code != EXIT_CODE {
         let tail = snake[snake_length - 1];
@@ -163,6 +194,7 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
 
             // Check if the cell the snake is moving into is occupied by itself
             if cells[dest.x][dest.y] == SNAKE_CELL_ID {
+                stdout.execute(cursor::MoveTo(0, (ROWS + 2) as u16))?;
                 println!("You came second place!\r");
                 break;
             } else {
@@ -180,6 +212,7 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
             snake[snake_length - 1] = tail;
 
             if snake_length == (ROWS * COLS) {
+                stdout.execute(cursor::MoveTo(0, (ROWS + 2) as u16))?;
                 println!("You win!\r");
                 break;
             }
@@ -192,7 +225,8 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
 
         cells[head.x][head.y] = SNAKE_CELL_ID;
 
-        print_screen(cells);
+        print_screen(cells, prev_cells)?;
+        copy_cells(cells, &mut prev_cells);
         thread::sleep(GAME_SPEED);
         code = input_code.load(Ordering::Relaxed);
     }
@@ -201,36 +235,63 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
 }
 
 fn print_horizontal_border() {
-    for _ in 0..(COLS + 2) {
-        print!("{}", HORIZONTAL_BORDER);
+    unsafe {
+        for _ in 0..(COLS + 2) {
+            print!("{}", HORIZONTAL_BORDER);
+        }
     }
     println!("\r");
 }
 
-fn print_screen(cells: [[usize; ROWS as usize]; COLS as usize]) {
-    // Clear terminal
-    // See: http://rosettacode.org/wiki/Terminal_control/Clear_the_screen#Rust
-    print!("{}[2J", 27 as char);
+fn init_screen() -> Result<()> {
+    let mut stdout = stdout();
+    stdout.execute(cursor::MoveTo(0, 0))?;
 
     print_horizontal_border();
-
-    for i in 0..ROWS {
-        print!("{}", VERTICAL_BORDER);
-        for j in 0..COLS {
-            let value = cells[j][i];
-
-            if value == EMPTY_CELL_ID {
+    unsafe {
+        for _ in 0..ROWS {
+            print!("{}", VERTICAL_BORDER);
+            for _ in 0..COLS {
                 print!("{}", EMPTY_CELL);
-            } else if value == SNAKE_CELL_ID {
-                print!("{}", SNAKE);
-            } else if value == FRUIT_CELL_ID {
-                print!("{}", FRUIT);
-            } else {
-                print!("{}", UNKNOWN_CELL_VALUE);
+            }
+            println!("{}\r", VERTICAL_BORDER);
+        }
+    }
+    print_horizontal_border();
+    Ok(())
+}
+
+fn print_screen(cells: PlayArea, prev_cells: PlayArea) -> Result<()> {
+    let mut stdout = stdout();
+
+    unsafe {
+        for i in 0..ROWS {
+            for j in 0..COLS {
+                let value = cells[j][i];
+                let prev_value = prev_cells[j][i];
+
+                if value == prev_value {
+                    continue;
+                }
+                let c: char;
+
+                if value == EMPTY_CELL_ID {
+                    c = EMPTY_CELL;
+                } else if value == SNAKE_CELL_ID {
+                    c = SNAKE;
+                } else if value == FRUIT_CELL_ID {
+                    c = FRUIT;
+                } else {
+                    c = UNKNOWN_CELL_VALUE;
+                }
+
+                stdout
+                    .queue(cursor::MoveTo((j + 1) as u16, (i + 1) as u16))?
+                    .queue(Print(c.to_string()))?;
             }
         }
-        println!("{}\r", VERTICAL_BORDER);
     }
 
-    print_horizontal_border();
+    stdout.flush()?;
+    Ok(())
 }
