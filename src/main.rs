@@ -1,6 +1,8 @@
 use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::Result;
+use crossterm::terminal;
+use crossterm::ExecutableCommand;
 
 use rand::distributions::{Distribution, Uniform};
 
@@ -8,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use std::io::{stdout};
 
 use point::Point;
 mod point;
@@ -55,6 +58,9 @@ fn main() {
 
     exit_flag.store(true, Ordering::Relaxed);
     join_handle.join().expect("Error joining thread.");
+
+    println!("Press any key to exit...");
+    read().unwrap();
 
     disable_raw_mode().expect("Error disabling raw mode.");
 }
@@ -192,7 +198,7 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
 
         cells[head.x][head.y] = SNAKE_CELL_ID;
 
-        print_screen(cells);
+        print_screen(cells)?;
         thread::sleep(GAME_SPEED);
         code = input_code.load(Ordering::Relaxed);
     }
@@ -207,10 +213,10 @@ fn print_horizontal_border() {
     println!("\r");
 }
 
-fn print_screen(cells: [[usize; ROWS as usize]; COLS as usize]) {
+fn print_screen(cells: [[usize; ROWS as usize]; COLS as usize]) -> Result<()> {
     // Clear terminal
-    // See: http://rosettacode.org/wiki/Terminal_control/Clear_the_screen#Rust
-    print!("{}[2J", 27 as char);
+    let mut stdout = stdout();
+    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
 
     print_horizontal_border();
 
@@ -233,4 +239,5 @@ fn print_screen(cells: [[usize; ROWS as usize]; COLS as usize]) {
     }
 
     print_horizontal_border();
+    Ok(())
 }
