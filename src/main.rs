@@ -1,16 +1,17 @@
 use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use crossterm::Result;
 use crossterm::terminal;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
+use crossterm::Result;
 
 use rand::distributions::{Distribution, Uniform};
 
+use std::env;
+use std::io::stdout;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::io::{stdout};
 
 use point::Point;
 mod point;
@@ -18,12 +19,12 @@ mod point;
 const ROWS: usize = 15;
 const COLS: usize = 17;
 
-const HORIZONTAL_BORDER: char = ' ';
-const VERTICAL_BORDER: char = ' ';
-const EMPTY_CELL: char = '⬛';
-const SNAKE: char = '🟩';
-const FRUIT: char = '🟥';
-const UNKNOWN_CELL_VALUE: char = '⬜';
+static mut HORIZONTAL_BORDER: char = ' ';
+static mut VERTICAL_BORDER: char = ' ';
+static mut EMPTY_CELL: char = '⬛';
+static mut SNAKE: char = '🟩';
+static mut FRUIT: char = '🟥';
+static mut UNKNOWN_CELL_VALUE: char = '⬜';
 
 const EMPTY_CELL_ID: usize = 0;
 const SNAKE_CELL_ID: usize = 1;
@@ -38,6 +39,18 @@ const RIGHT_CODE: usize = 4;
 const GAME_SPEED: Duration = Duration::from_millis(100);
 
 fn main() {
+    println!("{}", env::consts::OS);
+
+    // Fallback to 'plain text' characters if on Windows
+    if env::consts::OS == "windows" {
+        unsafe {
+            EMPTY_CELL = '░';
+            SNAKE = '█';
+            FRUIT = 'X';
+            UNKNOWN_CELL_VALUE = '?';
+        }
+    }
+
     enable_raw_mode().expect("Error enabling raw mode.");
 
     // Wrap in an ARC so that we can share ownership between the main and second thread
@@ -59,7 +72,7 @@ fn main() {
     exit_flag.store(true, Ordering::Relaxed);
     join_handle.join().expect("Error joining thread.");
 
-    println!("Press any key to exit...");
+    println!("Press any key to exit...\r");
     read().unwrap();
 
     disable_raw_mode().expect("Error disabling raw mode.");
@@ -207,8 +220,10 @@ fn game_loop(input_code: Arc<AtomicUsize>) -> Result<()> {
 }
 
 fn print_horizontal_border() {
-    for _ in 0..(COLS + 2) {
-        print!("{}", HORIZONTAL_BORDER);
+    unsafe {
+        for _ in 0..(COLS + 2) {
+            print!("{}", HORIZONTAL_BORDER);
+        }
     }
     println!("\r");
 }
@@ -220,22 +235,23 @@ fn print_screen(cells: [[usize; ROWS as usize]; COLS as usize]) -> Result<()> {
 
     print_horizontal_border();
 
-    for i in 0..ROWS {
-        print!("{}", VERTICAL_BORDER);
-        for j in 0..COLS {
-            let value = cells[j][i];
-
-            if value == EMPTY_CELL_ID {
-                print!("{}", EMPTY_CELL);
-            } else if value == SNAKE_CELL_ID {
-                print!("{}", SNAKE);
-            } else if value == FRUIT_CELL_ID {
-                print!("{}", FRUIT);
-            } else {
-                print!("{}", UNKNOWN_CELL_VALUE);
+    unsafe {
+        for i in 0..ROWS {
+            print!("{}", VERTICAL_BORDER);
+            for j in 0..COLS {
+                let value = cells[j][i];
+                if value == EMPTY_CELL_ID {
+                    print!("{}", EMPTY_CELL);
+                } else if value == SNAKE_CELL_ID {
+                    print!("{}", SNAKE);
+                } else if value == FRUIT_CELL_ID {
+                    print!("{}", FRUIT);
+                } else {
+                    print!("{}", UNKNOWN_CELL_VALUE);
+                }
             }
+            println!("{}\r", VERTICAL_BORDER);
         }
-        println!("{}\r", VERTICAL_BORDER);
     }
 
     print_horizontal_border();
