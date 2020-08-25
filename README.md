@@ -9,6 +9,6 @@ The classic Snake game implemented in rust as a console application. Made while 
 
 ## Todo
 
-* Build this into an actual console application
-* Add cooler win/second place messages
-* Look back at this when I'm more experienced with Rust and laugh at the all the mistakes I made
+- [x] Build this into an actual console application
+- [ ] Add cooler win/second place messages
+- [ ] Look back at this when I'm more experienced with Rust and laugh at the all the mistakes I made
